@@ -32,8 +32,17 @@ export class EDAAppStack extends cdk.Stack {
 
     // Integration infrastructure
 
+    // NEW
+    const dlq = new sqs.Queue(this, "img-dlq", {
+      receiveMessageWaitTime: cdk.Duration.seconds(6),
+    });
+    // UPDATE
     const imageProcessQueue = new sqs.Queue(this, "img-process-q", {
       receiveMessageWaitTime: cdk.Duration.seconds(6),
+      deadLetterQueue: {
+        queue: dlq,
+        maxReceiveCount: 1,
+      },
     });
 
     const mailerQ = new sqs.Queue(this, "mailer-q", {
@@ -59,6 +68,17 @@ export class EDAAppStack extends cdk.Stack {
           BUCKET_NAME: imagesBucket.bucketName,
           REGION: 'eu-west-1'
         },
+      }
+    );
+
+    const rejectedFileFn = new lambdanode.NodejsFunction(
+      this,
+      "RejectedFileFn",
+      {
+        runtime: lambda.Runtime.NODEJS_22_X,
+        entry: `${__dirname}/../lambdas/rejectedFile.ts`,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 128,
       }
     );
 
@@ -88,6 +108,13 @@ export class EDAAppStack extends cdk.Stack {
     });
 
     persistImageDataFn.addEventSource(newImageEventSource);
+
+    const rejectedFileEventSource = new events.SqsEventSource(dlq, {
+      batchSize: 5,
+      maxBatchingWindow: cdk.Duration.seconds(10),
+    });
+
+    rejectedFileFn.addEventSource(rejectedFileEventSource);
 
     const newImageMailEventSource = new events.SqsEventSource(mailerQ, {
       batchSize: 5,
